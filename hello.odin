@@ -120,6 +120,12 @@ recursive_get_neighbors :: proc(depth: i16, max_depth: i16, node_id:u16, map_nod
 	return
 }
 
+
+character :: struct {
+	node : u16,
+	moveable : bool,
+}
+
 main :: proc() {
 	context.logger = log.create_console_logger();
 
@@ -139,6 +145,7 @@ main :: proc() {
 	shader := rl.LoadShader("", "base.fs");
 
 	m_tower := rl.LoadModel("level.glb")
+	m_character := rl.LoadModel("character.glb")
 	map_bounds : struct{bl:[2]f32,tr:[2]f32} = {{-17,-17},{5,17}}
 	read_bytes : u32
 	map_data := rl.LoadFileData("map.node_tree",&read_bytes)
@@ -196,6 +203,7 @@ main :: proc() {
 	
 
 	//t_tower := rl.LoadTexture("turret_diffuse.png")
+	m_character.materials[1].shader = shader
 	m_tower.materials[1].shader = shader
 
 	angle := f32(0.0)
@@ -219,6 +227,13 @@ main :: proc() {
 	in_range_neighbors_depth:[dynamic]u16
 
 
+	selected_character := u8(0)
+
+	characters:[dynamic]character
+	append(&characters,character{21,true})
+	append(&characters,character{22,true})
+	append(&characters,character{23,true})
+
 	for !rl.WindowShouldClose() {
 
 
@@ -241,7 +256,9 @@ main :: proc() {
 
 		}
 
-		left_click: if rl.IsMouseButtonDown(.LEFT){
+		left_click: if rl.IsMouseButtonPressed(.LEFT){
+
+
 
 			ray := rl.GetMouseRay(rl.GetMousePosition(), camera)
 
@@ -260,24 +277,39 @@ main :: proc() {
 				break left_click
 			}
 
-			if active_node < 0 {
-				active_node = hit_node
-				clear(&in_range_neighbors)
-				clear(&in_range_neighbors_depth)
-				append(&in_range_neighbors,u16(active_node))
-				append(&in_range_neighbors_depth,0)
-				recursive_get_neighbors_with_depth(0,5,u16(active_node),&map_nodes,&in_range_neighbors,&in_range_neighbors_depth)
-				break left_click
-			}
+			//if node contains a player controller character switch to that character
+			for character,i in characters {
+				if character.node == u16(hit_node) {
 
-			for node in in_range_neighbors {
-				if u16(hit_node) == node {
-					active_node = hit_node
+					selected_character = u8(i)
+
+					active_node = i16(character.node)
+
 					clear(&in_range_neighbors)
 					clear(&in_range_neighbors_depth)
 					append(&in_range_neighbors,u16(active_node))
 					append(&in_range_neighbors_depth,0)
-					recursive_get_neighbors_with_depth(0,5,u16(active_node),&map_nodes,&in_range_neighbors,&in_range_neighbors_depth)
+					if character.moveable {
+						recursive_get_neighbors_with_depth(0,5,u16(active_node),&map_nodes,&in_range_neighbors,&in_range_neighbors_depth)
+					}
+					break left_click
+				}
+			}
+
+			if characters[selected_character].moveable == false{
+				break left_click
+			}
+
+			//otherwise try to move the selected character
+			for node in in_range_neighbors {
+				if u16(hit_node) == node {
+					characters[selected_character].node = u16(hit_node)
+					active_node = i16(characters[selected_character].node)
+					clear(&in_range_neighbors)
+					clear(&in_range_neighbors_depth)
+					append(&in_range_neighbors,u16(active_node))
+					append(&in_range_neighbors_depth,0)
+					characters[selected_character].moveable = false
 				}
 			}
 
@@ -317,7 +349,20 @@ main :: proc() {
 		}
 
 
-		
+		if rl.IsKeyPressed(.E){
+			for character,i in characters {
+				characters[i].moveable = true
+			}
+			node := characters[selected_character].node
+			recursive_get_neighbors_with_depth(0,5,u16(node),&map_nodes,&in_range_neighbors,&in_range_neighbors_depth)
+		}
+
+
+
+
+
+
+		//RENDER
 		
 
 		rl.BeginDrawing()
@@ -326,8 +371,41 @@ main :: proc() {
 			rl.BeginMode3D(camera)
 				rl.DrawModel(m_tower,towerPos,1.0,rl.WHITE)
 
-				if active_node >= 0 {
-					node := map_nodes[active_node]
+
+				for neighbor,i in in_range_neighbors{
+					node := map_nodes[neighbor]
+					quad_points := [4]rl.Vector3{node_vertices[node.quad[0]],node_vertices[node.quad[1]],node_vertices[node.quad[2]],node_vertices[node.quad[3]]}
+					ordered_points := order_quad(quad_points)
+
+					if in_range_neighbors_depth[i] == 0 {
+						rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.BLUE)
+						rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.BLUE)
+					}
+
+					if in_range_neighbors_depth[i] == 1 {
+						rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.GREEN)
+						rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.GREEN)
+					}
+
+					if in_range_neighbors_depth[i] == 2 {
+						rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.YELLOW)
+						rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.YELLOW)
+					}
+
+					if in_range_neighbors_depth[i] == 3 {
+						rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.ORANGE)
+						rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.ORANGE)
+					}
+
+					if in_range_neighbors_depth[i] == 4 {
+						rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.RED)
+						rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.RED)
+					}
+
+				}
+
+				for character in characters{
+					node := map_nodes[character.node]
 					quad_points := [4]rl.Vector3{node_vertices[node.quad[0]],node_vertices[node.quad[1]],node_vertices[node.quad[2]],node_vertices[node.quad[3]]}
 
 					m:rl.Vector3
@@ -338,48 +416,12 @@ main :: proc() {
 
 					ordered_points := order_quad(quad_points)
 
-					rl.DrawSphere(m, 0.1, rl.RED)
-
-
-
-
-
-					for neighbor,i in in_range_neighbors{
-						node := map_nodes[neighbor]
-						quad_points := [4]rl.Vector3{node_vertices[node.quad[0]],node_vertices[node.quad[1]],node_vertices[node.quad[2]],node_vertices[node.quad[3]]}
-						ordered_points := order_quad(quad_points)
-
-						if in_range_neighbors_depth[i] == 0 {
-							rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.BLUE)
-							rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.BLUE)
-						}
-
-						if in_range_neighbors_depth[i] == 1 {
-							rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.GREEN)
-							rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.GREEN)
-						}
-
-						if in_range_neighbors_depth[i] == 2 {
-							rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.YELLOW)
-							rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.YELLOW)
-						}
-
-						if in_range_neighbors_depth[i] == 3 {
-							rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.ORANGE)
-							rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.ORANGE)
-						}
-
-						if in_range_neighbors_depth[i] == 4 {
-							rl.DrawTriangle3D(ordered_points[0],ordered_points[1],ordered_points[2],rl.RED)
-							rl.DrawTriangle3D(ordered_points[2],ordered_points[3],ordered_points[0],rl.RED)
-						}
-
-					}
+					rl.DrawModel(m_character,m,1.0,rl.WHITE)
 				}
 
 			rl.EndMode3D()
 
-			//rl.DrawText(rl.TextFormat("Cam Pos: %i, %i",camera.target.xz),0,0,24,rl.RED)
+			rl.DrawText(rl.TextFormat("Press E to end turn"),0,0,24,rl.RED)
 		rl.EndDrawing()
 	}
 
